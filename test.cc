@@ -15,19 +15,24 @@
 
 #define ENQUEUE_TO 1000000
 
+int global_int;
+
 struct Node {
+  inline Node() : val(-1), next(NULL) {}
+  inline Node(int v) : val(v), next(NULL) {}
   int val;
   struct Node *next;
 };
 
-lf_queue<Node> queue;
-atomic<int> produce_alive;
+lf_queue<Node> que;
+atomic<int> producer_alive;
 
 pid_t gettid(void) { return syscall(__NR_gettid); }
 
 void *producer_routine(void *arg) {
   int i;
   int proc_num = (int)(long)arg;
+  int val = proc_num * ENQUEUE_TO;
   cpu_set_t set;
 
   CPU_ZERO(&set);
@@ -37,9 +42,28 @@ void *producer_routine(void *arg) {
     perror("sched_setaffinity");
     return NULL;
   }
+
+  for (i = 0; i < ENQUEUE_TO; i++) {
+    Node *ptr = new Node(val++);
+    que.enqueue(ptr);
+  }
+
+  producer_alive.dec();
+
+  return NULL;
 }
 
-void *consumer_routine(void *arg) {}
+void *consumer_routine(void *arg) {
+  while (que.empty() && producer_alive.value == 0) {
+    Node *ptr = que.dequeue_all();
+    while (ptr != NULL) {
+      if (ptr->val >= 0) {
+        global_int++;
+      }
+      ptr = ptr->next;
+    }
+  }
+}
 
 int main() {
   int procs = 0;
@@ -74,14 +98,15 @@ int main() {
 
   t1 = gettimeofday(&t1, NULL);
 
-  produce_alive = procs - 1;
+  producer_alive = procs - 1;
+  global_int = 0;
 
   for (i = 0; i < procs - 1; i++) {
     if (pthread_create(&thrs[i], NULL, producer_routine, (void *)(long)i)) {
       perror("pthread_create");
       procs = i;
       flag = true;
-      produce_alive.dec();
+      producer_alive.dec();
       break;
     }
   }
