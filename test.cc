@@ -20,8 +20,6 @@
 int global_int;
 
 struct Node {
-  inline Node() : val(-1), next(NULL) {}
-  inline Node(int v) : val(v), next(NULL) {}
   int val;
   struct Node *next;
 };
@@ -31,10 +29,12 @@ atomic<int> producer_alive;
 
 pid_t gettid(void) { return syscall(__NR_gettid); }
 
+struct Node *nodes;
+
 void *producer_routine(void *arg) {
   int i;
   int proc_num = (int)(long)arg;
-  int val = proc_num * ENQUEUE_TO;
+  struct Node *ptr = nodes + proc_num * ENQUEUE_TO;
   cpu_set_t set;
 
   CPU_ZERO(&set);
@@ -46,8 +46,10 @@ void *producer_routine(void *arg) {
   }
 
   for (i = 0; i < ENQUEUE_TO; i++) {
-    Node *ptr = new Node(val++);
+    ptr->val = proc_num;
+    ptr->next = NULL;
     que.enqueue(ptr);
+    ptr++;
   }
 
   producer_alive.dec();
@@ -70,13 +72,10 @@ void *consumer_routine(void *arg) {
   Node *ptr, *next;
   while (!que.empty() || producer_alive.value != 0) {
     ptr = que.dequeue_all();
-    if(ptr == NULL)
-      continue;
+    if (ptr == NULL) continue;
     while (!que.end_of_dequeue_list(ptr)) {
-      next = ptr->next;
       global_int++;
-      delete ptr;
-      ptr = next;
+      ptr = ptr->next;
     }
   }
   return NULL;
@@ -100,13 +99,15 @@ int main() {
   }
 
   thrs = (pthread_t *)malloc(sizeof(pthread_t) * procs);
+  nodes = (struct Node *)malloc(sizeof(Node) * ENQUEUE_TO * (procs - 1));
 
   if (thrs == NULL) {
     perror("malloc");
     return -1;
   }
 
-  printf("Starting %d threads, with 1 consumer and %d producers...\n", procs, procs - 1);
+  printf("Starting %d threads, with 1 consumer and %d producers...\n", procs,
+         procs - 1);
 
   bool flag = false;
 
@@ -144,6 +145,7 @@ int main() {
   gettimeofday(&t2, NULL);
 
   free(thrs);
+  free(nodes);
 
   printf("After doing all the enqueue and dequeue, global_int value is: %d\n",
          global_int);
