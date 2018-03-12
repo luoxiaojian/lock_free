@@ -82,7 +82,7 @@ class atomic_impl<T, false> : public IS_POD_TYPE {
     T new_value;
     do {
       prev_value = value;
-      new_value = pre_value + val;
+      new_value = prev_value + val;
     } while (!atomic_compare_and_swap(value, prev_value, new_value));
     return new_value;
   }

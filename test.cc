@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <errno.h>
 #include <linux/unistd.h>
@@ -54,15 +56,30 @@ void *producer_routine(void *arg) {
 }
 
 void *consumer_routine(void *arg) {
-  while (que.empty() && producer_alive.value == 0) {
-    Node *ptr = que.dequeue_all();
-    while (ptr != NULL) {
-      if (ptr->val >= 0) {
-        global_int++;
-      }
-      ptr = ptr->next;
+  int i;
+  int proc_num = (int)(long)arg;
+  cpu_set_t set;
+
+  CPU_ZERO(&set);
+  CPU_SET(proc_num, &set);
+
+  if (sched_setaffinity(gettid(), sizeof(cpu_set_t), &set)) {
+    perror("sched_setaffinity");
+    return NULL;
+  }
+  Node *ptr, *next;
+  while (!que.empty() || producer_alive.value != 0) {
+    ptr = que.dequeue_all();
+    if(ptr == NULL)
+      continue;
+    while (!que.end_of_dequeue_list(ptr)) {
+      next = ptr->next;
+      global_int++;
+      delete ptr;
+      ptr = next;
     }
   }
+  return NULL;
 }
 
 int main() {
@@ -89,17 +106,18 @@ int main() {
     return -1;
   }
 
-  printf("Starting %d threads, with 1 consumer and %d producers...\n", procs, 1,
-         procs - 1);
+  printf("Starting %d threads, with 1 consumer and %d producers...\n", procs, procs - 1);
 
   bool flag = false;
 
   struct timeval t1, t2;
 
-  t1 = gettimeofday(&t1, NULL);
+  gettimeofday(&t1, NULL);
 
   producer_alive = procs - 1;
   global_int = 0;
+
+  que.init();
 
   for (i = 0; i < procs - 1; i++) {
     if (pthread_create(&thrs[i], NULL, producer_routine, (void *)(long)i)) {
@@ -123,13 +141,13 @@ int main() {
     pthread_join(thrs[i], NULL);
   }
 
-  t2 = gettimeofday(&t2, NULL);
+  gettimeofday(&t2, NULL);
 
   free(thrs);
 
   printf("After doing all the enqueue and dequeue, global_int value is: %d\n",
          global_int);
-  printf("Expected value is: %d\n", ENQUEUE_TO * procs);
+  printf("Expected value is: %d\n", ENQUEUE_TO * (procs - 1));
   double dur = t2.tv_usec - t1.tv_usec;
   dur = dur / 1000000.0 + (t2.tv_sec - t1.tv_sec);
   printf("Elapsed time is: %lf\n", dur);
